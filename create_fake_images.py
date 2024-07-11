@@ -1,11 +1,13 @@
 import os
 import glob
 import random
+import string
 import time
 import json
 from datetime import datetime
 from statistics import mean
 import argparse
+import itertools
 
 from PIL import Image
 import numpy as np
@@ -29,12 +31,14 @@ parser.add_argument('--output-dir', type=str, default=None, help='output directo
 parser.add_argument('--snapshot-dir', type=str, default=None, help='directory with pre-trained model snapshots')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--size', type=int, default=224, help='size of the data crop (squared assumed)')
-
+parser.add_argument('--version', type=str, default=None, help='which version of SqueezeNet to load (1_0/1_1)') # Add this line
 
 args = parser.parse_args()
 # check args
 if args.dataset_root_path is None:
     assert False, 'Path to dataset not provided!'
+if args.version is None or args.version not in ['1_0', '1_1']:
+    assert False, 'Model version not recognized!'  # Check for the version
 
 # determine if ir or rgb data
 args.dataset_root_path = os.path.normpath(args.dataset_root_path)
