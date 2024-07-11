@@ -4,7 +4,8 @@ from datetime import datetime
 from statistics import mean
 import argparse
 import itertools
-
+import random
+import string
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -17,8 +18,7 @@ import torch.nn.functional as F
 
 from models import Generator, Discriminator, SqueezeNet
 from datasets import GANDataset, GazeDataset
-from utils import ReplayBuffer, LambdaLR, Logger, gan2gaze, gaze2gan, plot_confusion_matrix
-
+from utils import ReplayBuffer, Logger, gan2gaze, gaze2gan, plot_confusion_matrix
 
 parser = argparse.ArgumentParser('Options for training GPCycleGAN in PyTorch...')
 parser.add_argument('--dataset-root-path', type=str, default=None, help='path to dataset')
@@ -28,9 +28,8 @@ parser.add_argument('--output-dir', type=str, default=None, help='output directo
 parser.add_argument('--snapshot-dir', type=str, default=None, help='directory with pre-trained model snapshots')
 parser.add_argument('--size', type=int, default=224, help='size of the data crop (squared assumed)')
 parser.add_argument('--batch-size', type=int, default=1, metavar='N', help='batch size for training')
-parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train for')
+parser.add_argument('--epochs', type=int, default=1, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=2e-4, metavar='LR', help='learning rate')
-parser.add_argument('--decay-epoch', type=int, default=100, help='epoch to start linearly decaying the learning rate to 0')
 parser.add_argument('--train-gaze', action='store_true', default=False, help='train GazeNet simultaneously')
 parser.add_argument('--tau', type=float, default=0.01, help='sigmoid temperature used in gaze loss')
 parser.add_argument('--weight-decay', type=float, default=0.0005, metavar='WD', help='weight decay')
@@ -38,7 +37,6 @@ parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='n
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--random-transforms', action='store_true', default=False, help='apply random transforms to input while training')
-
 
 args = parser.parse_args()
 # check args
@@ -61,13 +59,21 @@ args.num_classes = len(activity_classes)
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M")
+    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H-%M")  # Replace ':' with '-' for Windows compatibility
     args.output_dir = os.path.join('.', 'experiments', 'gpcyclegan', args.output_dir)
 
-if not os.path.exists(args.output_dir):
-    os.makedirs(args.output_dir)
-else:
-    assert False, 'Output directory already exists!'
+# Create output directory, appending a unique identifier if it already exists
+def create_unique_dir(base_dir):
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    else:
+        while os.path.exists(base_dir):
+            unique_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            base_dir = f"{base_dir}_{unique_id}"
+        os.makedirs(base_dir)
+    return base_dir
+
+args.output_dir = create_unique_dir(args.output_dir)
 
 # store config in output directory
 with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
@@ -77,14 +83,12 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-
 kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 6}
 train_loader = torch.utils.data.DataLoader(GANDataset(args, [args.data_type + '_no_glasses'], [args.data_type + '_with_glasses'], activity_classes, random_transforms=args.random_transforms, unaligned=True), **kwargs)
 val_loader = torch.utils.data.DataLoader(GazeDataset(os.path.join(args.dataset_root_path, args.data_type + '_all_data'), activity_classes, 'val', False), **kwargs)
 
 # global var to store best validation accuracy across all epochs
 best_accuracy = 0.0
-
 
 # training function
 def train(netG_A2B, netG_B2A, netD_A, netD_B, netGaze, epoch):
@@ -216,11 +220,6 @@ def train(netG_A2B, netG_B2A, netD_A, netD_B, netGaze, epoch):
                 epoch, (b_idx+1) * args.batch_size, len(train_loader.dataset),
                 100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item()))
 
-    # Update learning rates
-    lr_scheduler_G.step()
-    lr_scheduler_D_A.step()
-    lr_scheduler_D_B.step()
-
     # now that the epoch is completed calculate statistics and store logs
     train_accuracy, _ =  plot_confusion_matrix(target_all, pred_all, merged_activity_classes)
     avg_loss = mean(epoch_loss)
@@ -233,7 +232,6 @@ def train(netG_A2B, netG_B2A, netD_A, netD_B, netGaze, epoch):
         f.write("Accuracy for epoch = {:.2f}%\n------------------------\n".format(train_accuracy))
     
     return netG_A2B, netG_B2A, netD_A, netD_B, netGaze, avg_loss, train_accuracy
-
 
 # validation function
 def val(netG_A2B, netG_B2A, netD_A, netD_B, netGaze):
@@ -278,7 +276,6 @@ def val(netG_A2B, netG_B2A, netD_A, netD_B, netGaze):
 
     return val_accuracy
 
-
 if __name__ == '__main__':
     # networks
     netG_A2B = Generator(args.nc, args.nc)
@@ -306,23 +303,19 @@ if __name__ == '__main__':
         netD_B.cuda()
         netGaze.cuda()
 
-    # Lossess
+    # Losses
     criterion_GAN = torch.nn.MSELoss()
     criterion_cycle = torch.nn.L1Loss()
     criterion_identity = torch.nn.L1Loss()
     criterion_gaze = lambda cam1, cam2: F.mse_loss(torch.sigmoid(args.tau*cam1), torch.sigmoid(args.tau*cam2))
 
-    # Optimizers & LR schedulers
+    # Optimizers
     optimizer_G = optim.Adam(itertools.chain(netG_A2B.parameters(), netG_B2A.parameters()), 
         lr=args.learning_rate, betas=(0.5, 0.999))
     optimizer_D_A = optim.Adam(netD_A.parameters(), lr=args.learning_rate, betas=(0.5, 0.999))
     optimizer_D_B = optim.Adam(netD_B.parameters(), lr=args.learning_rate, betas=(0.5, 0.999))
     optimizer_gaze = optim.Adam(netGaze.parameters(), lr=args.learning_rate if args.train_gaze else 0.0, 
         weight_decay=args.weight_decay if args.train_gaze else 0.0)
-
-    lr_scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=LambdaLR(args.epochs, 0, args.decay_epoch).step)
-    lr_scheduler_D_A = optim.lr_scheduler.LambdaLR(optimizer_D_A, lr_lambda=LambdaLR(args.epochs, 0, args.decay_epoch).step)
-    lr_scheduler_D_B = optim.lr_scheduler.LambdaLR(optimizer_D_B, lr_lambda=LambdaLR(args.epochs, 0, args.decay_epoch).step)
 
     # Inputs & targets memory allocation
     Tensor = torch.cuda.FloatTensor if args.cuda else torch.Tensor
