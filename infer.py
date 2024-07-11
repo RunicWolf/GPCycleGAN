@@ -4,6 +4,8 @@ from datetime import datetime
 from statistics import mean
 import argparse
 import itertools
+import random
+import string
 
 import numpy as np
 from scipy.io import savemat
@@ -35,7 +37,6 @@ parser.add_argument('--seed', type=int, default=1, help='set seed to some consta
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--save-viz', action='store_true', default=False, help='save visualization depicting intermediate images and network outputs')
 
-
 args = parser.parse_args()
 # check args
 if args.dataset_root_path is None:
@@ -59,13 +60,24 @@ args.num_classes = len(activity_classes)
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M")
+    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H-%M")
     args.output_dir = os.path.join('.', 'experiments', 'inference', args.output_dir)
 
-if not os.path.exists(args.output_dir):
-    os.makedirs(args.output_dir)
-else:
-    assert False, 'Output directory already exists!'
+# Ensure the directory name is valid
+args.output_dir = args.output_dir.replace(':', '-')
+
+# Create output directory, appending a unique identifier if it already exists
+def create_unique_dir(base_dir):
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    else:
+        while os.path.exists(base_dir):
+            unique_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            base_dir = f"{base_dir}_{unique_id}"
+        os.makedirs(base_dir)
+    return base_dir
+
+args.output_dir = create_unique_dir(args.output_dir)
 
 # store config in output directory
 with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
@@ -74,7 +86,6 @@ with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
-
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 6}
 test_loader = torch.utils.data.DataLoader(GazeDataset(args.dataset_root_path, activity_classes, args.split, False), **kwargs)
