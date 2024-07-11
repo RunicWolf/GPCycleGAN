@@ -1,0 +1,8 @@
+pip install numpy
+pip install pillow
+pip install matplotlib
+pip install scipy
+pip install opencv-python
+pip install scikit-learn
+pip install visdom
+pip install torch==1.7.1+cu101 torchvision==0.8.2+cu101 -f
