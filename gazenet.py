@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from statistics import mean
 import argparse
+import random
+import string
 
 import numpy as np
 import matplotlib
@@ -18,14 +20,13 @@ from models import SqueezeNet
 from datasets import GazeDataset
 from utils import plot_confusion_matrix
 
-
 parser = argparse.ArgumentParser('Options for training GazeNet in PyTorch...')
 parser.add_argument('--dataset-root-path', type=str, default=None, help='path to dataset')
 parser.add_argument('--version', type=str, default=None, help='which version of SqueezeNet to load (1_0/1_1)')
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training')
-parser.add_argument('--epochs', type=int, default=50, metavar='N', help='number of epochs to train for')
+parser.add_argument('--epochs', type=int, default=5, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=4e-4, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=0.0005, metavar='WD', help='weight decay')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='number of iterations to print/save log after')
@@ -33,8 +34,8 @@ parser.add_argument('--seed', type=int, default=1, help='set seed to some consta
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--random-transforms', action='store_true', default=False, help='apply random transforms to input while training')
 
-
 args = parser.parse_args()
+
 # check args
 if args.dataset_root_path is None:
     assert False, 'Path to dataset not provided!'
@@ -49,13 +50,24 @@ args.num_classes = len(activity_classes)
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M")
+    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H-%M")
     args.output_dir = os.path.join('.', 'experiments', 'gazenet', args.output_dir)
 
-if not os.path.exists(args.output_dir):
-    os.makedirs(args.output_dir)
-else:
-    assert False, 'Output directory already exists!'
+# Ensure the directory name is valid
+args.output_dir = args.output_dir.replace(':', '-')
+
+# Create output directory, appending a unique identifier if it already exists
+def create_unique_dir(base_dir):
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    else:
+        while os.path.exists(base_dir):
+            unique_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            base_dir = f"{base_dir}_{unique_id}"
+        os.makedirs(base_dir)
+    return base_dir
+
+args.output_dir = create_unique_dir(args.output_dir)
 
 # store config in output directory
 with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
@@ -65,14 +77,12 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-
 kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 6}
 train_loader = torch.utils.data.DataLoader(GazeDataset(args.dataset_root_path, activity_classes, 'train', args.random_transforms), **kwargs)
 val_loader = torch.utils.data.DataLoader(GazeDataset(args.dataset_root_path, activity_classes, 'val', False), **kwargs)
 
 # global var to store best validation accuracy across all epochs
 best_accuracy = 0.0
-
 
 # training function
 def train(netGaze, epoch):
@@ -122,7 +132,6 @@ def train(netGaze, epoch):
     
     return netGaze, avg_loss, train_accuracy
 
-
 # validation function
 def val(netGaze):
     global best_accuracy
@@ -157,7 +166,6 @@ def val(netGaze):
         best_accuracy, _ = plot_confusion_matrix(target_all, pred_all, merged_activity_classes, args.output_dir)
 
     return val_accuracy
-
 
 if __name__ == '__main__':
     # get the model, load pretrained weights, and convert it into cuda for if necessary
