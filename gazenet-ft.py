@@ -3,7 +3,8 @@ import json
 from datetime import datetime
 from statistics import mean
 import argparse
-
+import random 
+import string
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -25,14 +26,13 @@ parser.add_argument('--version', type=str, default=None, help='which version of 
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot-dir', type=str, default=None, help='directory with pre-trained model snapshots')
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training')
-parser.add_argument('--epochs', type=int, default=50, metavar='N', help='number of epochs to train for')
+parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=1e-4, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=0.0005, metavar='WD', help='weight decay')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='number of iterations to print/save log after')
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--random-transforms', action='store_true', default=False, help='apply random transforms to input while training')
-
 
 args = parser.parse_args()
 # check args
@@ -57,13 +57,24 @@ args.num_classes = len(activity_classes)
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M")
+    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H-%M")
     args.output_dir = os.path.join('.', 'experiments', 'gazenet-ft', args.output_dir)
 
-if not os.path.exists(args.output_dir):
-    os.makedirs(args.output_dir)
-else:
-    assert False, 'Output directory already exists!'
+# Ensure the directory name is valid
+args.output_dir = args.output_dir.replace(':', '-')
+
+# Create output directory, appending a unique identifier if it already exists
+def create_unique_dir(base_dir):
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    else:
+        while os.path.exists(base_dir):
+            unique_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            base_dir = f"{base_dir}_{unique_id}"
+        os.makedirs(base_dir)
+    return base_dir
+
+args.output_dir = create_unique_dir(args.output_dir)
 
 # store config in output directory
 with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
